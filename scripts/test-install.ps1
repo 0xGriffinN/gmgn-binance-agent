@@ -20,8 +20,9 @@ function Set-Item {
 $node = (Get-Command node -ErrorAction Stop).Source
 & (Join-Path $fixture 'install.ps1') -NodePath $node -BawPath (Join-Path $fixture 'fake-cli.mjs') -FourPath (Join-Path $fixture 'fake-cli.mjs')
 $launcher = Join-Path $fixture '.local\native-host.cmd'
-$sourceText = [IO.File]::ReadAllText($launcher).Replace((Join-Path $fixture 'host\native.mjs'),(Join-Path $fixture 'fake-cli.mjs'))
-[IO.File]::WriteAllText($launcher,$sourceText,[Text.UTF8Encoding]::new($false))
+# Replace only the isolated fixture entry point; keep the generated launcher intact.
+# TEMP can use an 8.3 path while PSScriptRoot expands it on GitHub Windows runners.
+[IO.File]::WriteAllText((Join-Path $fixture 'host\native.mjs'),'console.log(JSON.stringify(process.argv.slice(2)))',[Text.UTF8Encoding]::new($false))
 $result = & $launcher 'chrome-extension://fixture/'
 if ($LASTEXITCODE -ne 0 -or ($result | ConvertFrom-Json)[0] -ne 'chrome-extension://fixture/') { throw 'Unicode launcher failed' }
 Write-Output 'PASS: isolated install and Unicode launcher; registry writes intercepted'
