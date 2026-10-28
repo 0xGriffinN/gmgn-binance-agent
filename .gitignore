@@ -1,0 +1,16 @@
+.local/
+runtime/
+node_modules/
+*.log
+VALIDATION.md
+vendor/agent-id-exclusive-token-launches.mjs
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.bak
+*.zip
+work/
+.DS_Store

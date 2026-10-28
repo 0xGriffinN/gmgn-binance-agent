@@ -1,0 +1,19 @@
+{
+  "name": "gmgn-binance-agent",
+  "version": "0.5.10",
+  "private": true,
+  "type": "module",
+  "description": "GMGN BSC 快捷交易 · Binance Agentic Wallet",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "preview": "node scripts/preview.mjs",
+    "verify-platforms": "node --use-env-proxy scripts/verify-platforms.mjs"
+  },
+  "dependencies": {
+    "ethers": "6.17.0"
+  }
+}
