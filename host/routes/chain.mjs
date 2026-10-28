@@ -26,17 +26,19 @@ export class Chain {
     this.providers=this.urls.map(url=>{ const req=new ethers.FetchRequest(url);req.timeout=this.trade?5000:12000;return new ethers.JsonRpcProvider(req,56,{staticNetwork:true,batchMaxCount:1}); });
     this.verified=new Set();this.verifyJobs=new Map();this.metas=new Map();this.metaJobs=new Map();this.scope=new AsyncLocalStorage();this.cooldowns=new Map();
   }
-  withReadScope(fn){return this.scope.run(new Map(),fn);}
+  withReadScope(fn){return this.scope.getStore()?fn():this.scope.run(new Map(),fn);}
+  async verifyProvider(i){
+    if(this.verified.has(i))return;
+    if(!this.verifyJobs.has(i))this.verifyJobs.set(i,Promise.resolve().then(()=>this.providers[i].send('eth_chainId',[])).then(id=>{requireThat(BigInt(id)===56n,'WRONG_CHAIN','RPC 不是 BSC 主网');this.verified.add(i);}).finally(()=>this.verifyJobs.delete(i)));
+    await this.verifyJobs.get(i);
+  }
   async run(fn) {
     for(let round=0;round<(this.trade?2:1);round++){
     const all=this.providers.map((_,i)=>i),warm=all.filter(i=>(this.cooldowns.get(i)||0)<=Date.now()),order=warm.length?warm:all.sort((a,b)=>(this.cooldowns.get(a)||0)-(this.cooldowns.get(b)||0));
     for (const i of order) {
       try {
         const p=this.providers[i];
-        if(!this.verified.has(i)){
-          if(!this.verifyJobs.has(i))this.verifyJobs.set(i,Promise.resolve().then(()=>p.send('eth_chainId',[])).then(id=>{requireThat(BigInt(id)===56n,'WRONG_CHAIN','RPC 不是 BSC 主网');this.verified.add(i);}).finally(()=>this.verifyJobs.delete(i)));
-          await this.verifyJobs.get(i);
-        }
+        await this.verifyProvider(i);
         return await fn(p);
       } catch(e) {
         if(e instanceof AppError || ['CALL_EXCEPTION','BAD_DATA','INVALID_ARGUMENT','NUMERIC_FAULT'].includes(e.code))throw e;
@@ -80,6 +82,25 @@ export class Chain {
     return current>=amount?null:contractStep('授权本次需要的数量',token,ERC,'approve',[spender,amount],0n,'approval');
   }
   async receipt(hash){return this.run(p=>p.getTransactionReceipt(hash));}
+  async confirmation(hash){
+    // Race at most two endpoints for a complete, internally consistent pair.
+    // Null is pending, never a winning confirmation. No transaction is broadcast.
+    const all=this.providers.map((_,i)=>i),warm=all.filter(i=>(this.cooldowns.get(i)||0)<=Date.now());
+    const indexes=(warm.length?warm:all).slice(0,2);
+    if(!indexes.length)throw new AppError('RPC_UNAVAILABLE','没有可用的 BSC RPC');
+    const pending=Symbol('pending');
+    const jobs=indexes.map(async i=>{
+      try{
+        await this.verifyProvider(i);const p=this.providers[i];
+        const [receipt,tx]=await Promise.all([p.getTransactionReceipt(hash),p.getTransaction(hash)]);
+        if(!receipt||!tx||tx.blockNumber==null)throw pending;
+        requireThat(same(receipt.hash,hash)&&same(tx.hash,hash)&&receipt.blockNumber===tx.blockNumber&&same(receipt.blockHash,tx.blockHash),'TX_MISMATCH','RPC 返回的回执和交易不一致');
+        return [receipt,tx];
+      }catch(e){if(e!==pending)this.cooldowns.set(i,Date.now()+5000);throw e;}
+    });
+    try{return await Promise.any(jobs);}
+    catch(e){if(e.errors?.includes(pending))return [null,null];throw e.errors?.[0]||e;}
+  }
   async transaction(hash){return this.run(p=>p.getTransaction(hash));}
   async block(){return this.run(p=>p.getBlockNumber());}
   transfers(receipt,token,owner) {

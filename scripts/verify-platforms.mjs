@@ -15,7 +15,7 @@ const service=new RoutedService(wallet,journal,cfg);
 const cases=[{platform:'gang',token:'0xaf21e620ff8df6042902e01e52cfbb22933abbbb',amount:'0.005'},
   {platform:'four',token:'0x214b4342fb525323aa25a7ddf0076f1529824444',amount:'0.00001'},
   {platform:'flap',token:'0x6441633c0d5edb29e9afa50cdc9a61304b9d7777',amount:'0.00001'}];
-const report={version:'0.5.10',checkedAt:new Date().toISOString(),mode:'read-only',submittedTransactions:0,cases:[]};
+const report={version:'0.5.11',checkedAt:new Date().toISOString(),mode:'read-only',submittedTransactions:0,cases:[]};
 try{
   const owner=await service.owner();
   for(const item of cases){

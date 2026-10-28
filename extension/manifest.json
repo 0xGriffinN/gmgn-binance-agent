@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GMGN · 币安 Agent 快捷交易",
-  "version": "0.5.10",
+  "version": "0.5.11",
   "description": "在 GMGN BSC 页面通过 Binance Agentic Wallet 真实报价与买卖",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzdWIGqcMPC0FNQ+wU/SdKa/NpHSTuF6FylWIrgoja+cGBfb/jULf8YCilswZ5dI23RomLQIXOkojKNDAEFJadOpndkzOvFKcAGr0Khp+rr7X++/3Sv3lBZY49jb9GEj49zcNvITwlgm+Jh1XGMO2RB8OR1BzyFb/Q3aJVoF+zQk+WxQNgxjXXnprxkzNeN3Fi+rMX6RXXIZ89nR79VRLWA3iwPKaBC37Iv9dGqXnS3QpYSK+hk0nv/+6fSjzQO5JaJM/4KW2SI3pZR2YafAazm99CJTdSztaSLO9aBOZoLOAkZZrXrz/Srnq7Ndl7Q6V/zW80+RG/s8M2qSSLZ+LgwIDAQAB",
   "permissions": [

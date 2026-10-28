@@ -35,15 +35,20 @@ export class SupplyBuy {
     const base=tradeInput({...input,amount:'0.000001'}),s=this.service,r=s.router,owner=await s.owner();
     requireThat(!await s.journal.active(),'INFLIGHT','已有待确认交易，请先核对');
     let route=await r.detect(base.token,owner);
-    if(route.stage==='inner')await s.developer();
     let info;
-    try{info=await r.supplyInfo(route,base.token,owner);}catch(e){
+    // Independent reads start together; join every result before using a plan.
+    const reads=await Promise.allSettled([
+      r.supplyInfo(route,base.token,owner),r.tokenMeta(base.token),s.nativeBalance(owner),
+      route.stage==='inner'?s.developer():Promise.resolve()
+    ]);
+    try{if(reads[0].status==='rejected')throw reads[0].reason;info=reads[0].value;}catch(e){
       if(e.code==='CALL_EXCEPTION'||e.code==='BAD_DATA')requireThat(false,'SUPPLY_UNAVAILABLE','无法核实该代币或曲线份额总量，请使用 BNB 金额买入');
       throw e;
     }
+    for(const result of reads)if(result.status==='rejected')throw result.reason;
     requireThat(info.supply>0n,'SUPPLY_UNAVAILABLE','链上总量为零或尚未发行，请使用 BNB 金额买入');
     route=info.route;
-    const meta=await r.tokenMeta(base.token),asked=info.supply*raw(requestedPct,2)/10000n;
+    const meta=reads[1].value,asked=info.supply*raw(requestedPct,2)/10000n;
     let target=asked;
     if(info.room!==null&&info.room!==undefined){
       requireThat(info.room>0n,'HOLDING_CAP','已达单钱包上限，未下单');
@@ -52,7 +57,7 @@ export class SupplyBuy {
     }
     if(info.unit)target=target/info.unit*info.unit;
     requireThat(target>0n,'SUPPLY_TARGET','所选比例不足最小交易份数');
-    const native=raw((await s.nativeBalance(owner)).balance),reserve=raw(s.cfg.gasReserveBnb||'.00005');
+    const native=raw(reads[2].value.balance),reserve=raw(s.cfg.gasReserveBnb||'.00005');
     requireThat(native>reserve,'INSUFFICIENT_BNB','BNB 不足以保留 Gas');
     let maxBudget=raw(s.cfg.maxBuyBnb||'.1');
     if(info.unit||route.stage==='outer'||same(route.quote,ZERO))maxBudget=min(maxBudget,native-reserve);

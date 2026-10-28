@@ -7,6 +7,39 @@ import { RoutedService } from '../host/routed-service.mjs';
 import { Gang } from '../host/routes/gang.mjs';
 const TOKEN='0xaf21e620ff8df6042902e01e52cfbb22933abbbb',OWNER='0x1234567890123456789012345678901234567890',Q='0x4902C5ebc598265Ed2212b559B042De8a5Eeec3f';
 function chain(t,cfg={}){const c=new Chain(cfg);t.after(()=>c.providers.forEach(p=>p.destroy?.()));return c;}
+
+test('confirmation uses the fast verified node without waiting for a slow primary',async t=>{
+  const c=chain(t,{rpcPurpose:'trade'});c.providers.forEach(p=>p.destroy());
+  const hash='0x'+'a'.repeat(64),blockHash='0x'+'b'.repeat(64),receipt={hash,blockHash,blockNumber:12,status:1},tx={hash,blockHash,blockNumber:12};
+  let release;const slow=new Promise(resolve=>{release=resolve;});
+  c.providers=[{send:async()=>56,getTransactionReceipt:()=>slow,getTransaction:async()=>tx},{send:async()=>56,getTransactionReceipt:async()=>receipt,getTransaction:async()=>tx}];
+  try{assert.deepEqual(await c.confirmation(hash),[receipt,tx]);assert.equal(c.verified.size,2);}finally{release(null);}
+});
+
+test('a fast null receipt cannot mask a mined receipt from the other node',async t=>{
+  const c=chain(t,{rpcPurpose:'trade'});c.providers.forEach(p=>p.destroy());
+  const hash='0x'+'a'.repeat(64),blockHash='0x'+'b'.repeat(64),receipt={hash,blockHash,blockNumber:12},tx={hash,blockHash,blockNumber:12};
+  c.providers=[{send:async()=>56,getTransactionReceipt:async()=>null,getTransaction:async()=>null},{send:async()=>56,getTransactionReceipt:async()=>receipt,getTransaction:async()=>tx}];
+  assert.deepEqual(await c.confirmation(hash),[receipt,tx]);
+  c.providers[1].getTransactionReceipt=async()=>null;assert.deepEqual(await c.confirmation(hash),[null,null]);
+});
+
+test('confirmation rejects mismatched hashes, blocks and wrong-chain providers',async t=>{
+  const c=chain(t,{rpcPurpose:'trade'});c.providers.forEach(p=>p.destroy());
+  const hash='0x'+'a'.repeat(64),blockHash='0x'+'b'.repeat(64);
+  const receipt={hash,blockHash,blockNumber:12},tx={hash,blockHash,blockNumber:12};
+  c.providers=[{send:async()=>56,getTransactionReceipt:async()=>receipt,getTransaction:async()=>tx}];
+  for(const bad of [{hash:'other'},{blockHash:'other'},{blockNumber:13}]){
+    c.providers[0].getTransaction=async()=>({...tx,...bad});await assert.rejects(c.confirmation(hash),{code:'TX_MISMATCH'});
+  }
+  c.verified.clear();c.providers[0].send=async()=>1;await assert.rejects(c.confirmation(hash),{code:'WRONG_CHAIN'});
+});
+
+test('nested supply preparation shares reads, while a later submit scope stays fresh',async t=>{
+  const c=chain(t);let calls=0;c.run=async()=>{calls++;return ERC.encodeFunctionResult('balanceOf',[100n]);};
+  await c.withReadScope(async()=>{await c.balance(TOKEN,OWNER);await c.withReadScope(()=>c.balance(TOKEN,OWNER));});
+  assert.equal(calls,1);await c.balance(TOKEN,OWNER);assert.equal(calls,2);
+});
 test('trade RPC configuration uses its own pool without putting dedicated URLs into reads',()=>{
   const p=rpcPools({rpcUrls:['https://read.example'],tradeRpcUrls:['https://trade.example']},{});
   assert.deepEqual(p.read,['https://read.example']);assert.equal(p.trade[0],'https://trade.example');assert.ok(!p.read.some(u=>p.trade.includes(u)));

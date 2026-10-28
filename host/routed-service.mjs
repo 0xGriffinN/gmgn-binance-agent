@@ -73,11 +73,15 @@ export class RoutedService extends Service {
   async walletSettings(){return this.backgroundState?(await this.walletState.get()).settings:this.reads.get('developer',5000,()=>this.wallet.cli(['wallet','settings']));}
   async nativeBalance(owner){return this.router.chain.nativeBalance?{balance:fmt(await this.router.chain.nativeBalance(owner))}:this.balance(BNB);}
   async prepareSupply(input){
-    const startedAt=Date.now(),plan=await new SupplyBuy(this).plan(input),p=await this.prepare(plan.input);
+    const run=()=>this.prepareSupplyStep(input);
+    return this.router.chain.withReadScope?this.router.chain.withReadScope(run):run();
+  }
+  async prepareSupplyStep(input){
+    const startedAt=Date.now(),plan=await new SupplyBuy(this).plan(input),supplyPlanMs=Date.now()-startedAt,p=await this.prepare(plan.input);
     requireThat(same(p.owner,plan.owner),'WALLET_CHANGED','筹码计算期间钱包切换，已停止');
     const meta=await this.router.tokenMeta(p.input.token);
     p.buyTarget={...plan.buyTarget,estimatedTokens:p.quote.toCoinAmount,estimatedPct:supplyPct(raw(p.quote.toCoinAmount,meta.decimals),raw(plan.buyTarget.supply,meta.decimals))};
-    p.prepareMs=Date.now()-startedAt;return p;
+    p.prepareTiming={...p.prepareTiming,supplyPlanMs};p.prepareMs=Date.now()-startedAt;return p;
   }
   async snapshot(input={}) {
     const key=`snapshot:${input.token||''}`;
@@ -288,11 +292,14 @@ export class RoutedService extends Service {
         await this.journal.save(row);
       }
       const knownHash=step.txHash;
+      const pollTiming={};
+      const timed=async(name,fn)=>{const at=Date.now();try{return await fn();}finally{pollTiming[name]=(pollTiming[name]||0)+Date.now()-at;}};
+      const confirmation=hash=>timed('rpcMs',()=>this.router.chain.confirmation?this.router.chain.confirmation(hash):Promise.all([this.router.chain.receipt(hash),this.router.chain.transaction(hash)]));
       // Wallet lookup and chain confirmation run together, never wait on the CLI to begin RPC.
       const checks=await Promise.allSettled([
-        this.reads.get('poll-owner',5000,()=>this.owner()),
-        step.kind==='market'&&step.orderId?this.wallet.cli(['market-order','list','--orderId',step.orderId]):Promise.resolve(null),
-        knownHash?Promise.all([this.router.chain.receipt(knownHash),this.router.chain.transaction(knownHash)]):Promise.resolve(null)
+        timed('identityMs',()=>this.reads.get('poll-owner',5000,()=>this.owner())),
+        step.kind==='market'&&step.orderId?timed('walletOrderMs',()=>this.wallet.cli(['market-order','list','--orderId',step.orderId])):Promise.resolve(null),
+        knownHash?confirmation(knownHash):Promise.resolve(null)
       ]);
       for(const c of checks)if(c.status==='rejected')throw c.reason;
       requireThat(same(checks[0].value,row.wallet),'WALLET_CHANGED','请连接原钱包后查单');
@@ -314,7 +321,8 @@ export class RoutedService extends Service {
         if(row.status==='APP_CONFIRM'&&Date.now()-step.createdAt>20*60000){row.status='UNKNOWN';row.message='App 审批结果尚未识别，请核对订单或补充交易哈希；不会重复提交';await this.journal.save(row);}
         return row;
       }
-      const [receipt,transaction]=knownHash===step.txHash&&checks[2].value?checks[2].value:await Promise.all([this.router.chain.receipt(step.txHash),this.router.chain.transaction(step.txHash)]);if(!receipt)return row;
+      const [receipt,transaction]=knownHash===step.txHash&&checks[2].value?checks[2].value:await confirmation(step.txHash);if(!receipt)return row;
+      step.pollTiming=pollTiming;
       requireThat(transaction,'TX_MISSING','交易详情暂未查到，请继续核对');
       const relayed=!same(transaction.from,row.wallet);
       if(relayed){

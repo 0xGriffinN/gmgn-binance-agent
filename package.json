@@ -1,6 +1,6 @@
 {
   "name": "gmgn-binance-agent",
-  "version": "0.5.10",
+  "version": "0.5.11",
   "private": true,
   "type": "module",
   "description": "GMGN BSC 快捷交易 · Binance Agentic Wallet",

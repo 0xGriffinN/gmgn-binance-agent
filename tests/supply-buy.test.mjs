@@ -20,6 +20,17 @@ test('buy 1% means token supply, with remaining wallet room and existing budget 
   assert.equal(plan.buyTarget.targetTokens,'1980000.0');assert.equal(plan.input.amount,'0.0198');assert.equal(plan.buyTarget.requestedPct,'1');assert.match(plan.buyTarget.note,/剩余额度/);assert.ok(calls.length<=6);
 });
 
+test('supply, metadata, balance and developer checks start together and failure prevents quoting',async()=>{
+  const {service,planner,calls}=fixture();const started=[];let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  for(const [object,key] of [[service.router,'supplyInfo'],[service.router,'tokenMeta'],[service,'nativeBalance'],[service,'developer']]){
+    const original=object[key];object[key]=async(...args)=>{started.push(key);await gate;if(key==='developer')throw new Error('developer disabled');return original(...args);};
+  }
+  const planned=planner.plan(input);const failure=assert.rejects(planned,/developer disabled/);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(started.sort(),['developer','nativeBalance','supplyInfo','tokenMeta']);release();await failure;assert.equal(calls.length,0);
+});
+
 test('requested chips above the local buy limit become a smaller disclosed purchase, never a higher limit',async()=>{
   const {planner}=fixture({room:null,limit:'.003'});const plan=await planner.plan(input);
   assert.equal(plan.input.amount,'0.003');assert.equal(plan.buyTarget.estimatedPct,'0.03');assert.match(plan.buyTarget.note,/单笔上限/);
