@@ -159,7 +159,7 @@ export class Service {
   }
   async dispatch(method, params) {
     switch (method) {
-      case 'health': return { version: '0.5.11', chainId: '56', mode: 'live', maxBuyBnb: this.cfg.maxBuyBnb || '0.1' };
+      case 'health': return { version: '0.5.12', chainId: '56', mode: 'live', maxBuyBnb: this.cfg.maxBuyBnb || '0.1' };
       case 'wallet.snapshot': return this.snapshot(params);
       case 'auth.start': return this.startLogin();
       case 'auth.verify': return this.verifyLogin();

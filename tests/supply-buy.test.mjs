@@ -7,6 +7,24 @@ import { Router } from '../host/routes/router.mjs';
 const TOKEN='0xaf21e620ff8df6042902e01e52cfbb22933abbbb',OWNER='0x1234567890123456789012345678901234567890';
 const input={chainId:'56',token:TOKEN,side:'buy',amount:'.003',pctSupply:'1',slippage:'auto',mev:true,gasLevel:'MEDIUM'};
 
+test('Gang direct funding uses one bounded estimate and never chases the target',async()=>{
+  for(const kind of ['v2','v3'])for(const limit of ['.001','.1']){
+    const route={platform:'gang',kind,stage:'inner',quote:TOKEN,c:{realQuote:'0',gradAmt:String(raw('2025')),virtualQuote:String(raw('675')),sold:'0'}};
+    const {service,planner}=fixture({route,limit});let quotes=0;
+    service.router.chain.meta=async()=>({decimals:18});
+    service.router.fundingQuote=async(_q,budget)=>{quotes++;return {required:fmt(raw(budget)*1000n),viaUsdt:false};};
+    const plan=await planner.plan(input);assert.equal(quotes,1);assert.ok(raw(plan.input.amount)<=raw(limit));assert.match(plan.buyTarget.note,/快速估算/);
+    assert.ok(raw(plan.buyTarget.estimatedTokens)>0n);
+  }
+});
+
+test('Gang USDT intermediary keeps the iterative quote path',async()=>{
+  const route={platform:'gang',kind:'v2',stage:'inner',quote:TOKEN,c:{realQuote:'0',gradAmt:String(raw('2025')),virtualQuote:String(raw('675')),sold:'0'}};
+  const {service,planner}=fixture({route});let quotes=0;service.router.chain.meta=async()=>({decimals:18});
+  service.router.fundingQuote=async(_q,budget)=>{quotes++;return {required:fmt(raw(budget)*1000n),viaUsdt:true};};
+  const plan=await planner.plan(input);assert.ok(quotes>1);assert.doesNotMatch(plan.buyTarget.note,/快速估算/);
+});
+
 function fixture({room=raw('10000000'),supply=raw('1000000000'),limit='.1',native='1',route={platform:'gang',kind:'v2',stage:'inner',quote:WBNB},unit,unitCost}={}){
   const calls=[];
   const service={cfg:{maxBuyBnb:limit},owner:async()=>OWNER,journal:{active:async()=>null},developer:async()=>{},nativeBalance:async()=>({balance:native}),router:{

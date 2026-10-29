@@ -24,7 +24,13 @@ export class Chain {
     this.urls=cfg.rpcUrls || ['https://bsc-dataseed.bnbchain.org','https://bsc-rpc.publicnode.com'];
     this.trade=cfg.rpcPurpose==='trade';
     this.providers=this.urls.map(url=>{ const req=new ethers.FetchRequest(url);req.timeout=this.trade?5000:12000;return new ethers.JsonRpcProvider(req,56,{staticNetwork:true,batchMaxCount:1}); });
-    this.verified=new Set();this.verifyJobs=new Map();this.metas=new Map();this.metaJobs=new Map();this.scope=new AsyncLocalStorage();this.cooldowns=new Map();
+    this.verified=new Set();this.verifyJobs=new Map();this.metas=new Map();this.metaJobs=new Map();this.scope=new AsyncLocalStorage();this.cooldowns=new Map();this.bans=new Map();
+  }
+  available(){return this.providers.map((_,i)=>i).filter(i=>(this.bans.get(i)||0)<=Date.now());}
+  penalize(i,e){
+    const message=[e.message,e.shortMessage,e.info?.responseBody,e.info?.responseStatus,e.status].filter(Boolean).join(' ');
+    const forbidden=/\b403\b|forbidden/i.test(message),delay=forbidden?600000:/monthly quota/i.test(message)?3600000:/429|rate|quota|limit|retry/i.test(message)?20000:5000;
+    this.cooldowns.set(i,Date.now()+delay);if(forbidden)this.bans.set(i,Date.now()+delay);
   }
   withReadScope(fn){return this.scope.getStore()?fn():this.scope.run(new Map(),fn);}
   async verifyProvider(i){
@@ -34,7 +40,7 @@ export class Chain {
   }
   async run(fn) {
     for(let round=0;round<(this.trade?2:1);round++){
-    const all=this.providers.map((_,i)=>i),warm=all.filter(i=>(this.cooldowns.get(i)||0)<=Date.now()),order=warm.length?warm:all.sort((a,b)=>(this.cooldowns.get(a)||0)-(this.cooldowns.get(b)||0));
+    const all=this.available(),warm=all.filter(i=>(this.cooldowns.get(i)||0)<=Date.now()),order=warm.length?warm:all.sort((a,b)=>(this.cooldowns.get(a)||0)-(this.cooldowns.get(b)||0));
     for (const i of order) {
       try {
         const p=this.providers[i];
@@ -42,7 +48,7 @@ export class Chain {
         return await fn(p);
       } catch(e) {
         if(e instanceof AppError || ['CALL_EXCEPTION','BAD_DATA','INVALID_ARGUMENT','NUMERIC_FAULT'].includes(e.code))throw e;
-        this.cooldowns.set(i,Date.now()+(/429|rate|quota|limit|retry/i.test(String(e.message))?20000:5000));
+        this.penalize(i,e);
       }
     }
     if(round===0&&this.trade)await new Promise(resolve=>setTimeout(resolve,400));
@@ -85,7 +91,7 @@ export class Chain {
   async confirmation(hash){
     // Race at most two endpoints for a complete, internally consistent pair.
     // Null is pending, never a winning confirmation. No transaction is broadcast.
-    const all=this.providers.map((_,i)=>i),warm=all.filter(i=>(this.cooldowns.get(i)||0)<=Date.now());
+    const all=this.available(),warm=all.filter(i=>(this.cooldowns.get(i)||0)<=Date.now());
     const indexes=(warm.length?warm:all).slice(0,2);
     if(!indexes.length)throw new AppError('RPC_UNAVAILABLE','没有可用的 BSC RPC');
     const pending=Symbol('pending');
@@ -96,7 +102,7 @@ export class Chain {
         if(!receipt||!tx||tx.blockNumber==null)throw pending;
         requireThat(same(receipt.hash,hash)&&same(tx.hash,hash)&&receipt.blockNumber===tx.blockNumber&&same(receipt.blockHash,tx.blockHash),'TX_MISMATCH','RPC 返回的回执和交易不一致');
         return [receipt,tx];
-      }catch(e){if(e!==pending)this.cooldowns.set(i,Date.now()+5000);throw e;}
+      }catch(e){if(e!==pending)this.penalize(i,e);throw e;}
     });
     try{return await Promise.any(jobs);}
     catch(e){if(e.errors?.includes(pending))return [null,null];throw e.errors?.[0]||e;}

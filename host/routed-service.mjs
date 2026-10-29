@@ -58,13 +58,19 @@ export class RoutedService extends Service {
     const input=this.warmInput;if(!input||this.warmJob||this.mutating.size)return;
     this.warmJob=true;
     try{
+      // Warm the last verified payment route without waiting for route discovery.
+      const fundingJob=this.warmRoute?.token===input.token?this.prewarmFunding(this.warmRoute.route,input):Promise.resolve();
       const routeJob=this.viewRouter.detect(input.token,owner,{force:true}).then(async route=>{
         // Verified read-only route hint; submit still checks the current contract and stage.
         this.router.reads.values.set(`route:${input.token.toLowerCase()}`,{at:Date.now(),value:route});
-        if(route.quote&&!same(route.quote,ZERO)&&!same(route.quote,WBNB))await this.viewRouter.fundingQuote(route.quote,input.amount,{slippage:input.slippage});
+        this.warmRoute={token:input.token,route};await this.prewarmFunding(route,input);
       });
-      await Promise.allSettled([routeJob,this.reads.get(`audit:${owner}:${input.token}`,15000,()=>this.wallet.audit(input.token)),this.viewRouter.tokenMeta(input.token)]);
+      await Promise.allSettled([fundingJob,routeJob,this.reads.get(`audit:${owner}:${input.token}`,15000,()=>this.wallet.audit(input.token)),this.viewRouter.tokenMeta(input.token)]);
     }finally{this.warmJob=false;}
+  }
+  async prewarmFunding(route,input){
+    if(!route?.quote||same(route.quote,ZERO)||same(route.quote,WBNB)||!this.viewRouter.fundingQuote)return;
+    return this.viewRouter.fundingQuote(route.quote,input.amount,{slippage:input.slippage||'auto'});
   }
   async developer(force=false){
     const s=this.backgroundState?(await this.walletState.get()).settings:await this.reads.get('developer',5000,()=>this.wallet.cli(['wallet','settings']),{force});
@@ -90,6 +96,8 @@ export class RoutedService extends Service {
   async routeView(input){
     requireThat(input.chainId==='56','UNSUPPORTED_CHAIN','当前版本只支持 BSC');
     const token=address(input.token),started=Date.now(),route=await this.viewRouter.detect(token,undefined,{force:input.force===true});
+    this.warmRoute={token,route};
+    void this.prewarmFunding(route,this.warmInput?.token===token?this.warmInput:{amount:'0.01',slippage:'auto'}).catch(()=>{});
     return {token,platform:route.platform,kind:route.kind,stage:route.stage,quote:route.quote,identifyMs:Date.now()-started};
   }
   async loadSnapshot(input={}) {

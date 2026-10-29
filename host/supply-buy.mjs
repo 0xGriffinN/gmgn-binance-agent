@@ -62,7 +62,7 @@ export class SupplyBuy {
     let maxBudget=raw(s.cfg.maxBuyBnb||'.1');
     if(info.unit||route.stage==='outer'||same(route.quote,ZERO))maxBudget=min(maxBudget,native-reserve);
     else if(await r.chain.balance(route.quote,owner)===0n)maxBudget=min(maxBudget,native-reserve);
-    let solved;
+    let solved,fastBudget=false;
     if(info.unit){
       const wanted=target/info.unit,shares=min(wanted,maxBudget/info.unitCost);
       requireThat(shares>0n,'BUY_LIMIT','单笔上限不足一份筹码');
@@ -83,12 +83,20 @@ export class SupplyBuy {
         else{
           const fx=await r.fundingQuote(route.quote,fmt(seed),base),pay=raw(fx.required,qMeta.decimals);
           requireThat(pay>0n,'NO_QUOTE','支付币报价为零');seed=min(ceil(seed*cost,pay),maxBudget);
+          // A bounded single-pass estimate: actual execution still rebuilds the
+          // curve quote from the received funding amount. Do not increase budget
+          // to chase an exact percentage while the market moves.
+          if(route.stage==='inner'&&['v2','v3'].includes(route.kind)&&!fx.viaUsdt){
+            const estimatedPay=pay*seed/min(raw('.01'),maxBudget);
+            solved={budget:seed,out:gangBuy(route.c,estimatedPay,info.room).tokens};fastBudget=true;
+          }
           quote=async budget=>{const f=await r.fundingQuote(route.quote,fmt(budget),base);return gangBuy(route.c,raw(f.required,qMeta.decimals),info.room).tokens;};
         }
       }else quote=async budget=>{const built=await r.build(route,{...base,amount:fmt(budget),approvalCap:false},owner,fmt(budget));return raw(built.out,meta.decimals);};
-      solved=await solveSupplyBudget({target,maxBudget,seed,quote});
+      if(!solved)solved=await solveSupplyBudget({target,maxBudget,seed,quote});
     }
     const notes=[];
+    if(fastBudget)notes.push('快速估算预算；按实际到账买入，不追补目标比例');
     if(target<asked)notes.push('已按钱包剩余额度或可售数量调整');
     if(solved.out*1000n<target*998n)notes.push('受单笔上限或余额限制，预计数量低于目标');
     return {owner,input:{...base,amount:fmt(solved.budget)},buyTarget:{requestedPct,supply:fmt(info.supply,meta.decimals),targetTokens:fmt(target,meta.decimals),estimatedTokens:fmt(solved.out,meta.decimals),estimatedPct:supplyPct(solved.out,info.supply),budgetBnb:fmt(solved.budget),note:notes.join('；'),symbol:meta.symbol}};

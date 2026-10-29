@@ -8,6 +8,22 @@ import { Gang } from '../host/routes/gang.mjs';
 const TOKEN='0xaf21e620ff8df6042902e01e52cfbb22933abbbb',OWNER='0x1234567890123456789012345678901234567890',Q='0x4902C5ebc598265Ed2212b559B042De8a5Eeec3f';
 function chain(t,cfg={}){const c=new Chain(cfg);t.after(()=>c.providers.forEach(p=>p.destroy?.()));return c;}
 
+test('403 nodes remain excluded even when every other node is cooling',async t=>{
+  const c=chain(t,{rpcPurpose:'trade'});c.providers.forEach(p=>p.destroy());let denied=0;
+  c.providers=[{send:async()=>56,call:async()=>{denied++;throw new Error('403 Forbidden');}},{send:async()=>56,call:async()=>42}];
+  assert.equal(await c.run(p=>p.call()),42);c.cooldowns.set(1,Date.now()+20000);
+  assert.equal(await c.run(p=>p.call()),42);assert.equal(denied,1);
+  c.penalize(1,new Error('403 Forbidden'));await assert.rejects(c.confirmation('hash'),{code:'RPC_UNAVAILABLE'});
+  c.bans.set(0,Date.now()-1);assert.deepEqual(c.available(),[0]);
+});
+
+test('funding prewarm starts while fresh platform detection is still pending',async()=>{
+  const s=new RoutedService({}, {dir:'unused-test'}, {},{});let release,called=0;
+  const route={quote:Q};s.warmInput={token:TOKEN,amount:'.01',slippage:'50'};s.warmRoute={token:TOKEN,route};
+  s.router={reads:{values:new Map()}};s.viewRouter={detect:()=>new Promise(r=>{release=r;}),fundingQuote:async()=>{called++;},tokenMeta:async()=>({})};s.wallet={audit:async()=>({})};
+  const work=s.prewarmContext(OWNER);assert.equal(called,1);release(route);await work;assert.equal(s.warmJob,false);
+});
+
 test('confirmation uses the fast verified node without waiting for a slow primary',async t=>{
   const c=chain(t,{rpcPurpose:'trade'});c.providers.forEach(p=>p.destroy());
   const hash='0x'+'a'.repeat(64),blockHash='0x'+'b'.repeat(64),receipt={hash,blockHash,blockNumber:12,status:1},tx={hash,blockHash,blockNumber:12};
